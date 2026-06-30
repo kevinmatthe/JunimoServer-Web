@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AuthStatusResponse,
@@ -13,6 +13,10 @@ import type {
   SettingsResponse,
   StatsResponse,
 } from '../shared/junimo';
+
+import { AppLayout } from './components/Layout';
+import { ChatWidget } from './components/ChatWidget';
+import { Modal } from './components/Modal';
 
 type SessionPayload = {
   authenticated: boolean;
@@ -112,14 +116,10 @@ function relativeTime(iso: string): string {
   return `${deltaHour}h ago`;
 }
 
-function metricTone(ok: boolean, warn = false): string {
-  if (ok) {
-    return 'metric metric-ok';
-  }
-  if (warn) {
-    return 'metric metric-warn';
-  }
-  return 'metric metric-bad';
+function metricTone(ok: boolean, warn = false): 'ok' | 'warn' | 'bad' | 'neutral' {
+  if (ok) return 'ok';
+  if (warn) return 'warn';
+  return 'bad';
 }
 
 function screenshotUrl(base64Png?: string | null): string | null {
@@ -142,7 +142,15 @@ export function App() {
   const [chatLines, setChatLines] = useState<Array<{ type: string; text: string }>>([]);
   const [chatAuthor, setChatAuthor] = useState('AdminConsole');
   const [chatMessage, setChatMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'controls' | 'chat'>('dashboard');
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [activeModal, setActiveModal] = useState<string | null>(null);
+  
+  const [performanceHistory, setPerformanceHistory] = useState({
+    tps: [] as number[],
+    memory: [] as number[],
+    avgTick: [] as number[]
+  });
+
   const [forms, setForms] = useState({
     authTimeout: '600',
     renderingFps: '15',
@@ -180,6 +188,16 @@ export function App() {
       `/api/dashboard?diagnostics=${nextIncludeDiagnostics ? 'true' : 'false'}`,
     );
     setDashboard(nextDashboard);
+    
+    setPerformanceHistory(prev => {
+      const keep = 30;
+      return {
+        tps: [...prev.tps, nextDashboard.stats.tps].slice(-keep),
+        memory: [...prev.memory, nextDashboard.stats.memoryMb].slice(-keep),
+        avgTick: [...prev.avgTick, nextDashboard.stats.avgTickMs].slice(-keep),
+      };
+    });
+    
     setLoading(false);
   }
 
@@ -355,7 +373,7 @@ export function App() {
     setChatMessage('');
   }
 
-  if (loading) {
+  if (loading && !session?.authenticated) {
     return (
       <div className="page-shell">
         <div className="loading-panel">
@@ -402,18 +420,26 @@ export function App() {
     );
   }
 
+  const headerMetrics = dashboard ? [
+    { label: 'Server', value: dashboard.status.isOnline ? 'Online' : 'Offline', tone: metricTone(Boolean(dashboard.status.isOnline)) },
+    { label: 'Players', value: `${dashboard.players.players.length} / ${dashboard.status.maxPlayers}` },
+    { label: 'Time', value: fmtTimeOfDay(dashboard.status.timeOfDay) },
+    { label: 'Date', value: `${dashboard.status.season} ${dashboard.status.day}, Y${dashboard.status.year}` }
+  ] : [];
+
   return (
-    <div className="page-shell">
-      <header className="hero">
-        <div className="hero-copy">
-          <span className="eyebrow">JunimoServer administration</span>
-          <h1>{dashboard?.status.farmName || 'JunimoServer'} control panel</h1>
-          <p>
-            Same-origin admin console for the documented REST API. Write operations require session auth,
-            CSRF, rate limits, and explicit confirmation for destructive paths.
-          </p>
-        </div>
-        <div className="hero-actions">
+    <AppLayout
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      tabs={[
+        { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+        { id: 'map', label: 'Map View', icon: '🗺️' },
+        { id: 'console', label: 'Console', icon: '💻' }
+      ]}
+      headerMetrics={headerMetrics}
+      performanceHistory={performanceHistory}
+      rightAction={
+        <div style={{display: 'flex', gap: '8px'}}>
           <button
             className="secondary-button"
             type="button"
@@ -431,482 +457,322 @@ export function App() {
             Sign out
           </button>
         </div>
-      </header>
-
+      }
+    >
       {error ? <div className="notice notice-error">{error}</div> : null}
       {actionMessage ? <div className="notice notice-success">{actionMessage}</div> : null}
 
-      <section className="metric-grid">
-        <article className={metricTone(Boolean(dashboard?.status.isOnline))}>
-          <span className="metric-label">Server</span>
-          <strong>{dashboard?.status.isOnline ? 'Online' : 'Offline'}</strong>
-          <small>{dashboard?.status.serverVersion}</small>
-        </article>
-        <article className={metricTone(Boolean(dashboard?.status.isReady), Boolean(dashboard?.status.isOnline))}>
-          <span className="metric-label">Ready state</span>
-          <strong>{dashboard?.status.isReady ? 'Ready' : 'Blocked'}</strong>
-          <small>{dashboard?.status.isPaused ? 'Clock paused' : 'Clock running'}</small>
-        </article>
-        <article className={metricTone((dashboard?.players.players.length ?? 0) < (dashboard?.status.maxPlayers ?? 0), false)}>
-          <span className="metric-label">Players</span>
-          <strong>
-            {dashboard?.players.players.length ?? 0} / {dashboard?.status.maxPlayers ?? 0}
-          </strong>
-          <small>Connected now</small>
-        </article>
-        <article className={metricTone(!(dashboard?.health.isFrozen ?? false), (dashboard?.health.status ?? '') === 'degraded')}>
-          <span className="metric-label">Health</span>
-          <strong>{dashboard?.health.status ?? 'unknown'}</strong>
-          <small>{dashboard?.health.lastTickMs ?? 0} ms since last tick</small>
-        </article>
-        <article className="metric metric-neutral">
-          <span className="metric-label">Game time</span>
-          <strong>{fmtTimeOfDay(dashboard?.status.timeOfDay ?? 0)}</strong>
-          <small>
-            {dashboard?.status.season} day {dashboard?.status.day}, year {dashboard?.status.year}
-          </small>
-        </article>
-        <article className="metric metric-neutral">
-          <span className="metric-label">Render rate</span>
-          <strong>{dashboard?.rendering.fps ?? 0} FPS</strong>
-          <small>{dashboard?.stats.fps.toFixed(1)} measured host FPS</small>
-        </article>
-      </section>
-
-      
-      <nav className="stardew-tabs">
-        <button className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
-        <button className={`tab-button ${activeTab === 'map' ? 'active' : ''}`} onClick={() => setActiveTab('map')}>Map View</button>
-        <button className={`tab-button ${activeTab === 'controls' ? 'active' : ''}`} onClick={() => setActiveTab('controls')}>Controls</button>
-        <button className={`tab-button ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>Chat Bridge</button>
-      </nav>
-
-      <section className="tab-content">
-        {activeTab === 'dashboard' && (
-          <div className="layout-grid">
-            <div className="column">
-              <Panel title="Overview" subtitle="Snapshot-backed state and settings">
-            <DataList
-              items={[
-                ['Farm', dashboard?.status.farmName ?? '-'],
-                ['Farm type', String(dashboard?.status.farmTypeKey ?? '-')],
-                ['Updated', `${dashboard?.status.lastUpdated ?? '-'} (${relativeTime(dashboard?.status.lastUpdated ?? '')})`],
-                ['Invite code', dashboard?.inviteCode.inviteCode ?? dashboard?.inviteCode.error ?? 'Unavailable'],
-                ['Auth protection', dashboard?.auth.enabled ? 'Enabled' : 'Disabled'],
-                ['Auth timeout', `${dashboard?.auth.timeoutSeconds ?? 0}s`],
-                ['Cabin strategy', dashboard?.cabins.strategy ?? '-'],
-                ['Separate wallets', dashboard?.settings.server.separateWallets ? 'Yes' : 'No'],
-              ]}
-            />
-          </Panel>
-              <Panel title="Players" subtitle="Connected players and known farmhands">
-            <Table
-              headers={['Name', 'ID', 'Online']}
-              rows={dashboard?.players.players.map((player) => [
-                player.name,
-                String(player.id),
-                player.isOnline ? 'Yes' : 'No',
-              ]) ?? []}
-              emptyText="No connected players"
-            />
-            <div className="table-spacer" />
-            <Table
-              headers={['Farmhand', 'ID', 'Customized']}
-              rows={dashboard?.farmhands.farmhands.map((farmhand) => [
-                farmhand.name,
-                String(farmhand.id),
-                farmhand.isCustomized ? 'Yes' : 'No',
-              ]) ?? []}
-              emptyText="No farmhand slots found"
-            />
-          </Panel>
-            </div>
-            <div className="column">
-              <Panel title="Performance" subtitle="Host process metrics from /stats and /health">
-            <div className="stats-grid">
-              <StatBlock label="TPS" value={dashboard?.stats.tps.toFixed(1) ?? '-'} />
-              <StatBlock label="Target TPS" value={String(dashboard?.stats.targetTps ?? '-')} />
-              <StatBlock label="Avg tick" value={`${dashboard?.stats.avgTickMs.toFixed(2) ?? '-'} ms`} />
-              <StatBlock label="Memory" value={`${dashboard?.stats.memoryMb.toFixed(1) ?? '-'} MB`} />
-              <StatBlock label="Pending actions" value={String(dashboard?.health.pendingActions ?? '-')} />
-              <StatBlock label="Game-thread wait" value={`${dashboard?.stats.gameThreadWaitMs.toFixed(2) ?? '-'} ms`} />
-            </div>
-            <div className="stats-grid compact">
-              <StatBlock label="GC Gen0" value={String(dashboard?.stats.gcGen0 ?? '-')} />
-              <StatBlock label="GC Gen1" value={String(dashboard?.stats.gcGen1 ?? '-')} />
-              <StatBlock label="GC Gen2" value={String(dashboard?.stats.gcGen2 ?? '-')} />
-              <StatBlock label="Tick count" value={String(dashboard?.health.tickCount ?? '-')} />
-            </div>
-          </Panel>
-              <Panel title="Cabins" subtitle="Assignment and hidden-stack state">
-            <div className="stats-row">
-              <Badge label="Total" value={dashboard?.cabins.totalCount ?? 0} />
-              <Badge label="Assigned" value={dashboard?.cabins.assignedCount ?? 0} />
-              <Badge label="Available" value={dashboard?.cabins.availableCount ?? 0} />
-            </div>
-            <Table
-              headers={['Owner', 'Type', 'Tile', 'Assigned', 'Hidden']}
-              rows={dashboard?.cabins.cabins.map((cabin) => [
-                cabin.ownerName || 'Unassigned',
-                cabin.type,
-                `${cabin.tileX}, ${cabin.tileY}`,
-                cabin.isAssigned ? 'Yes' : 'No',
-                cabin.isHidden ? 'Yes' : 'No',
-              ]) ?? []}
-              emptyText="No cabins"
-            />
-          </Panel>
-            </div>
-            <div className="column">
-              <Panel title="Diagnostics" subtitle="Opt-in because `/diagnostics/state` is heavier and mostly test-facing">
-            <div className="toggle-row">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={includeDiagnostics}
-                  onChange={(event) => {
-                    const next = event.target.checked;
-                    setIncludeDiagnostics(next);
-                    setLoading(true);
-                    refreshData(next).catch((reason) => {
-                      setError(reason instanceof Error ? reason.message : 'Diagnostics refresh failed');
-                      setLoading(false);
-                    });
-                  }}
-                />
-                <span>Load `/diagnostics/state` on refresh</span>
-              </label>
-            </div>
-            {dashboard?.diagnostics ? (
-              <>
-                <DataList
-                  items={[
-                    ['Captured at', dashboard.diagnostics.capturedAt],
-                    ['Game mode', String(dashboard.diagnostics.gameMode)],
-                    ['Menu', dashboard.diagnostics.activeClickableMenu ?? 'None'],
-                    ['Online farmers', String(dashboard.diagnostics.onlineFarmerCount)],
-                    ['Disconnecting', dashboard.diagnostics.disconnectingFarmers.join(', ') || 'None'],
-                    ['Failed fields', dashboard.diagnostics.failedFields.join(', ') || 'None'],
-                  ]}
-                />
-                <div className="table-spacer" />
-                <Table
-                  headers={['Cabin owner', 'Indoors', 'Objects', 'Cellar', 'Pet']}
-                  rows={dashboard.diagnostics.cabins.map((cabin) => [
-                    cabin.ownerName || 'Unassigned',
-                    cabin.indoorsName,
-                    String(cabin.objectCount),
-                    String(cabin.cellarObjectCount),
-                    String(cabin.petCount),
-                  ])}
-                  emptyText="No diagnostics cabins"
-                />
-              </>
-            ) : (
-              <div className="empty-state">
-                Diagnostics are off by default. Enable the checkbox if you need live engine-state debugging.
+      {activeTab === 'dashboard' && dashboard && (
+        <div className="layout-grid">
+          <div className="column">
+            <Panel title="Overview" subtitle="Snapshot-backed state and settings">
+              <div className="overview-grid">
+                <div className="invite-card">
+                  <div>
+                    <span className="label">Invite Code</span>
+                    <span className="code">{dashboard.inviteCode.inviteCode ?? dashboard.inviteCode.error ?? 'Unavailable'}</span>
+                  </div>
+                  {dashboard.inviteCode.inviteCode && (
+                    <button 
+                      className="secondary-button" 
+                      onClick={() => navigator.clipboard.writeText(dashboard.inviteCode.inviteCode!)}
+                      title="Copy to clipboard"
+                    >
+                      📋 Copy
+                    </button>
+                  )}
+                </div>
+                
+                <div className="farm-tags">
+                  <span className="farm-tag"><span className="tag-icon">🌾</span> {dashboard.status.farmName || 'Unnamed Farm'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🗺️</span> Type {dashboard.status.farmTypeKey || '-'}</span>
+                  <span className="farm-tag"><span className="tag-icon">⏱️</span> {dashboard.status.lastUpdated ? relativeTime(dashboard.status.lastUpdated) : 'Not loaded'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🔒</span> {dashboard.auth.enabled ? 'Auth Enabled' : 'No Auth'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🏠</span> Cabins: {dashboard.cabins.strategy || '-'}</span>
+                  {dashboard.settings.server.separateWallets && <span className="farm-tag"><span className="tag-icon">💰</span> Separate Wallets</span>}
+                </div>
               </div>
-            )}
-          </Panel>
-            </div>
+            </Panel>
+            
+            <Panel title="Cabins" subtitle="Assignment and hidden-stack state">
+              <div className="stats-row">
+                <Badge label="Total" value={dashboard.cabins.totalCount} />
+                <Badge label="Assigned" value={dashboard.cabins.assignedCount} />
+                <Badge label="Available" value={dashboard.cabins.availableCount} />
+              </div>
+              <Table
+                headers={['Owner', 'Type', 'Tile', 'Assigned']}
+                rows={dashboard.cabins.cabins.map((cabin) => [
+                  cabin.ownerName || 'Unassigned',
+                  cabin.type,
+                  `${cabin.tileX}, ${cabin.tileY}`,
+                  cabin.isAssigned ? 'Yes' : 'No',
+                ])}
+                emptyText="No cabins"
+              />
+            </Panel>
           </div>
-        )}
 
-        {activeTab === 'map' && (
-          <div className="layout-single">
-            <Panel title="Live screenshot" subtitle="Fetched through the local secure proxy">
+          <div className="column" style={{ gridColumn: 'span 2' }}>
+            <Panel title="Players" subtitle="Connected players and known farmhands">
+              <Table
+                headers={['Name', 'ID', 'Online', 'Actions']}
+                rows={dashboard.players.players.map((player) => [
+                  player.name,
+                  String(player.id),
+                  player.isOnline ? 'Yes' : 'No',
+                  <div className="inline-actions" key={player.id}>
+                    <button 
+                      className="secondary-button" 
+                      onClick={() => runAction('Grant admin', '/api/actions/grant-admin', {
+                        method: 'POST',
+                        body: JSON.stringify({ playerId: player.id })
+                      })}
+                    >
+                      Admin
+                    </button>
+                  </div>
+                ])}
+                emptyText="No connected players"
+              />
+              <div className="table-spacer" />
+              <Table
+                headers={['Farmhand', 'ID', 'Customized', 'Actions']}
+                rows={dashboard.farmhands.farmhands.map((farmhand) => [
+                  farmhand.name,
+                  String(farmhand.id),
+                  farmhand.isCustomized ? 'Yes' : 'No',
+                  <div className="inline-actions" key={farmhand.id}>
+                    <button 
+                      className="secondary-button"
+                      style={{ color: 'var(--danger)' }}
+                      onClick={() => runAction('Delete farmhand', '/api/actions/farmhand', {
+                        method: 'DELETE',
+                        body: JSON.stringify({ playerId: farmhand.id, confirmText: 'DELETE FARMHAND' })
+                      })}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ])}
+                emptyText="No farmhand slots found"
+              />
+            </Panel>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'map' && (
+        <div className="layout-single">
+          <Panel title="Live screenshot" subtitle="Fetched through the local secure proxy">
             {screenshotSrc ? (
               <img className="screenshot-frame full-map" src={screenshotSrc} alt="JunimoServer screenshot" />
             ) : (
               <div className="empty-state">Screenshot unavailable: {dashboard?.screenshot.error ?? 'No image data'}</div>
             )}
           </Panel>
-          </div>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'controls' && (
-          <div className="layout-grid">
-            <div className="column">
-              <Panel title="Controls" subtitle="Low-risk runtime operations">
-            <div className="form-grid">
-              <ActionForm
-                title="Auth timeout"
-                description="Update password-protection timeout in seconds."
-                busy={busyAction === 'Auth timeout'}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Auth timeout', '/api/actions/auth-timeout', {
-                    method: 'POST',
-                    body: JSON.stringify({ value: Number(forms.authTimeout) }),
-                  });
-                }}
-              >
-                <label>
-                  <span>Seconds</span>
-                  <input value={forms.authTimeout} onChange={(event) => updateForm('authTimeout', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Render rate"
-                description="Set `/rendering?fps=`. `0` disables rendering."
-                busy={busyAction === 'Render rate'}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Render rate', '/api/actions/rendering', {
-                    method: 'POST',
-                    body: JSON.stringify({ fps: Number(forms.renderingFps) }),
-                  });
-                }}
-              >
-                <label>
-                  <span>FPS</span>
-                  <input value={forms.renderingFps} onChange={(event) => updateForm('renderingFps', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Set game time"
-                description="Valid upstream range is `600` to `2600`."
-                busy={busyAction === 'Set game time'}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Set game time', '/api/actions/time', {
-                    method: 'POST',
-                    body: JSON.stringify({ value: Number(forms.timeOfDay) }),
-                  });
-                }}
-              >
-                <label>
-                  <span>Time value</span>
-                  <input value={forms.timeOfDay} onChange={(event) => updateForm('timeOfDay', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Clock speed"
-                description="Set `/clock-speed?multiplier=` to accelerate or slow the day."
-                busy={busyAction === 'Clock speed'}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Clock speed', '/api/actions/clock-speed', {
-                    method: 'POST',
-                    body: JSON.stringify({ multiplier: Number(forms.clockSpeed) }),
-                  });
-                }}
-              >
-                <label>
-                  <span>Multiplier</span>
-                  <input value={forms.clockSpeed} onChange={(event) => updateForm('clockSpeed', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Grant admin"
-                description="Provide exactly one of player name or player ID."
-                busy={busyAction === 'Grant admin'}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Grant admin', '/api/actions/grant-admin', {
-                    method: 'POST',
-                    body: JSON.stringify(
-                      forms.grantAdminId.trim()
-                        ? { playerId: Number(forms.grantAdminId) }
-                        : { name: forms.grantAdminName.trim() },
-                    ),
-                  });
-                }}
-              >
-                <label>
-                  <span>Player name</span>
-                  <input value={forms.grantAdminName} onChange={(event) => updateForm('grantAdminName', event.target.value)} />
-                </label>
-                <label>
-                  <span>Player ID</span>
-                  <input value={forms.grantAdminId} onChange={(event) => updateForm('grantAdminId', event.target.value)} />
-                </label>
-              </ActionForm>
-            </div>
-          </Panel>
-            </div>
-            <div className="column">
-              <Panel title="Danger zone" subtitle="Destructive or disruptive operations require explicit confirmation text">
-            <div className="danger-grid">
-              <ActionForm
-                title="Delete farmhand"
-                description="Upstream requires either `name` or `playerId`. This cannot be undone."
-                busy={busyAction === 'Delete farmhand'}
-                danger
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Delete farmhand', '/api/actions/farmhand', {
-                    method: 'DELETE',
-                    body: JSON.stringify(
-                      forms.deleteFarmhandId.trim()
-                        ? {
-                            playerId: Number(forms.deleteFarmhandId),
-                            confirmText: forms.deleteConfirm,
-                          }
-                        : {
-                            name: forms.deleteFarmhandName.trim(),
-                            confirmText: forms.deleteConfirm,
-                          },
-                    ),
-                  });
-                }}
-              >
-                <label>
-                  <span>Farmhand name</span>
-                  <input
-                    value={forms.deleteFarmhandName}
-                    onChange={(event) => updateForm('deleteFarmhandName', event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Farmhand ID</span>
-                  <input
-                    value={forms.deleteFarmhandId}
-                    onChange={(event) => updateForm('deleteFarmhandId', event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Type `DELETE FARMHAND`</span>
-                  <input value={forms.deleteConfirm} onChange={(event) => updateForm('deleteConfirm', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Reload world"
-                description="Calls upstream `/reload`. Fails closed when clients are connected."
-                busy={busyAction === 'Reload world'}
-                danger
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  runAction('Reload world', '/api/actions/reload', {
-                    method: 'POST',
-                    body: JSON.stringify({ confirmText: forms.reloadConfirm }),
-                  });
-                }}
-              >
-                <label>
-                  <span>Type `RELOAD WORLD`</span>
-                  <input value={forms.reloadConfirm} onChange={(event) => updateForm('reloadConfirm', event.target.value)} />
-                </label>
-              </ActionForm>
-
-              <ActionForm
-                title="Create new game"
-                description="Wraps upstream `/newgame`. Use only when you intend to replace the current active world."
-                busy={busyAction === 'Create new game'}
-                danger
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const rawFarmType = forms.newGameFarmType.trim();
-                  const farmType = /^\d+$/.test(rawFarmType) ? Number(rawFarmType) : rawFarmType;
-                  runAction('Create new game', '/api/actions/new-game', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      farmType,
-                      farmName: forms.newGameFarmName.trim() || undefined,
-                      startingCabins: Number(forms.newGameStartingCabins),
-                      cabinStrategy: forms.newGameCabinStrategy,
-                      maxPlayers: Number(forms.newGameMaxPlayers),
-                      profitMargin: Number(forms.newGameProfitMargin),
-                      separateWallets: forms.newGameSeparateWallets,
-                      confirmText: forms.newGameConfirm,
-                    }),
-                  });
-                }}
-              >
-                <label>
-                  <span>Farm type (0-6 or custom ID)</span>
-                  <input value={forms.newGameFarmType} onChange={(event) => updateForm('newGameFarmType', event.target.value)} />
-                </label>
-                <label>
-                  <span>Farm name</span>
-                  <input value={forms.newGameFarmName} onChange={(event) => updateForm('newGameFarmName', event.target.value)} />
-                </label>
-                <label>
-                  <span>Starting cabins</span>
-                  <input
-                    value={forms.newGameStartingCabins}
-                    onChange={(event) => updateForm('newGameStartingCabins', event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Cabin strategy</span>
-                  <select
-                    value={forms.newGameCabinStrategy}
-                    onChange={(event) => updateForm('newGameCabinStrategy', event.target.value)}
-                  >
-                    <option value="CabinStack">CabinStack</option>
-                    <option value="FarmhouseStack">FarmhouseStack</option>
-                    <option value="None">None</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Max players</span>
-                  <input value={forms.newGameMaxPlayers} onChange={(event) => updateForm('newGameMaxPlayers', event.target.value)} />
-                </label>
-                <label>
-                  <span>Profit margin</span>
-                  <input
-                    value={forms.newGameProfitMargin}
-                    onChange={(event) => updateForm('newGameProfitMargin', event.target.value)}
-                  />
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={forms.newGameSeparateWallets}
-                    onChange={(event) => updateForm('newGameSeparateWallets', event.target.checked)}
-                  />
-                  <span>Separate wallets</span>
-                </label>
-                <label>
-                  <span>Type `CREATE NEW GAME`</span>
-                  <input value={forms.newGameConfirm} onChange={(event) => updateForm('newGameConfirm', event.target.value)} />
-                </label>
-              </ActionForm>
-            </div>
-          </Panel>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'chat' && (
-          <div className="layout-single">
-            <Panel title="Chat bridge" subtitle="WebSocket relay stays same-origin; browser never sees the upstream API key">
-            <div className="chat-status-row">
-              <span className={chatConnected ? 'status-pill status-ok' : 'status-pill status-offline'}>
-                {chatConnected ? 'Connected' : 'Disconnected'}
-              </span>
-              <span className="muted-text">Messages fan out through the backend WebSocket proxy.</span>
-            </div>
-            <div className="chat-log">
-              {chatLines.length === 0 ? <div className="empty-state">No chat traffic yet.</div> : null}
-              {chatLines.map((line, index) => (
-                <div key={`${line.type}-${index}`} className={`chat-line chat-${line.type}`}>
-                  {line.text}
+      {activeTab === 'console' && (
+        <div className="layout-grid">
+          <div className="column" style={{ gridColumn: 'span 2' }}>
+            <Panel title="Server Configuration" subtitle="Low-risk runtime operations">
+              <div className="settings-list">
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4>Auth timeout</h4>
+                    <p>Update password-protection timeout in seconds.</p>
+                  </div>
+                  <div className="settings-action">
+                    <input
+                      value={forms.authTimeout}
+                      onChange={(event) => updateForm('authTimeout', event.target.value)}
+                    />
+                    <button 
+                      disabled={busyAction === 'Auth timeout'}
+                      onClick={() => runAction('Auth timeout', '/api/actions/auth-timeout', { method: 'POST', body: JSON.stringify({ value: Number(forms.authTimeout) }) })}
+                    >
+                      Apply
+                    </button>
+                  </div>
                 </div>
-              ))}
-            </div>
-            <form className="chat-form" onSubmit={sendChat}>
-              <label>
-                <span>Author</span>
-                <input value={chatAuthor} onChange={(event) => setChatAuthor(event.target.value)} />
-              </label>
-              <label className="chat-message-input">
-                <span>Message</span>
-                <input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} />
-              </label>
-              <button type="submit">Send</button>
-            </form>
-          </Panel>
+
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4>Render rate</h4>
+                    <p>Set `/rendering?fps=`. `0` disables rendering.</p>
+                  </div>
+                  <div className="settings-action">
+                    <input
+                      value={forms.renderingFps}
+                      onChange={(event) => updateForm('renderingFps', event.target.value)}
+                    />
+                    <button 
+                      disabled={busyAction === 'Render rate'}
+                      onClick={() => runAction('Render rate', '/api/actions/rendering', { method: 'POST', body: JSON.stringify({ fps: Number(forms.renderingFps) }) })}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4>Set game time</h4>
+                    <p>Valid upstream range is `600` to `2600`.</p>
+                  </div>
+                  <div className="settings-action">
+                    <input
+                      value={forms.timeOfDay}
+                      onChange={(event) => updateForm('timeOfDay', event.target.value)}
+                    />
+                    <button 
+                      disabled={busyAction === 'Set game time'}
+                      onClick={() => runAction('Set game time', '/api/actions/time', { method: 'POST', body: JSON.stringify({ value: Number(forms.timeOfDay) }) })}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4>Clock speed</h4>
+                    <p>Set `/clock-speed?multiplier=` to accelerate or slow the day.</p>
+                  </div>
+                  <div className="settings-action">
+                    <input
+                      value={forms.clockSpeed}
+                      onChange={(event) => updateForm('clockSpeed', event.target.value)}
+                    />
+                    <button 
+                      disabled={busyAction === 'Clock speed'}
+                      onClick={() => runAction('Clock speed', '/api/actions/clock-speed', { method: 'POST', body: JSON.stringify({ multiplier: Number(forms.clockSpeed) }) })}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Danger Zone" subtitle="Destructive or disruptive operations">
+              <div className="settings-list">
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4 style={{color: 'var(--danger)'}}>Reload World</h4>
+                    <p>Calls upstream `/reload`. Fails closed when clients are connected.</p>
+                  </div>
+                  <div className="settings-action">
+                    <button 
+                      style={{background: 'var(--danger)'}}
+                      onClick={() => setActiveModal('reload')}
+                    >
+                      Reload World
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4 style={{color: 'var(--danger)'}}>Create New Game</h4>
+                    <p>Wraps upstream `/newgame`. Replaces the active world.</p>
+                  </div>
+                  <div className="settings-action">
+                    <button 
+                      style={{background: 'var(--danger)'}}
+                      onClick={() => setActiveModal('newgame')}
+                    >
+                      Create New Game
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Panel>
           </div>
-        )}
-      </section>
-    </div>
+        </div>
+      )}
+
+
+      <Modal isOpen={activeModal === 'reload'} onClose={() => setActiveModal(null)} title="Confirm Reload">
+        <p style={{marginBottom: 16}}>Type <strong>RELOAD WORLD</strong> to confirm you want to reload the world. This will disconnect all players.</p>
+        <form className="chat-form" onSubmit={(e) => {
+          e.preventDefault();
+          if (forms.reloadConfirm !== 'RELOAD WORLD') {
+            setError(`Type exactly "RELOAD WORLD" before reloading.`);
+            return;
+          }
+          setActiveModal(null);
+          runAction('Reload world', '/api/actions/reload', {
+            method: 'POST',
+            body: JSON.stringify({ confirmText: forms.reloadConfirm }),
+          });
+        }}>
+          <input 
+            autoFocus
+            value={forms.reloadConfirm} 
+            onChange={(e) => updateForm('reloadConfirm', e.target.value)} 
+            placeholder="RELOAD WORLD"
+          />
+          <button type="submit" style={{background: 'var(--danger)'}} disabled={busyAction === 'Reload world'}>Reload</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={activeModal === 'newgame'} onClose={() => setActiveModal(null)} title="Create New Game">
+        <p style={{marginBottom: 16}}>Configure your new world. This will replace the current save!</p>
+        <form className="action-form-body" onSubmit={(e) => {
+          e.preventDefault();
+          const rawFarmType = forms.newGameFarmType.trim();
+          const farmType = /^\d+$/.test(rawFarmType) ? Number(rawFarmType) : rawFarmType;
+          setActiveModal(null);
+          runAction('Create new game', '/api/actions/new-game', {
+            method: 'POST',
+            body: JSON.stringify({
+              farmType,
+              farmName: forms.newGameFarmName.trim() || undefined,
+              startingCabins: Number(forms.newGameStartingCabins),
+              cabinStrategy: forms.newGameCabinStrategy,
+              maxPlayers: Number(forms.newGameMaxPlayers),
+              profitMargin: Number(forms.newGameProfitMargin),
+              separateWallets: forms.newGameSeparateWallets,
+              confirmText: forms.newGameConfirm,
+            }),
+          });
+        }}>
+          <label><span>Farm type (0-6 or custom ID)</span><input value={forms.newGameFarmType} onChange={(e) => updateForm('newGameFarmType', e.target.value)} /></label>
+          <label><span>Farm name</span><input value={forms.newGameFarmName} onChange={(e) => updateForm('newGameFarmName', e.target.value)} /></label>
+          <label><span>Starting cabins</span><input value={forms.newGameStartingCabins} onChange={(e) => updateForm('newGameStartingCabins', e.target.value)} /></label>
+          <label><span>Cabin strategy</span>
+            <select value={forms.newGameCabinStrategy} onChange={(e) => updateForm('newGameCabinStrategy', e.target.value)}>
+              <option value="CabinStack">CabinStack</option>
+              <option value="FarmhouseStack">FarmhouseStack</option>
+              <option value="None">None</option>
+            </select>
+          </label>
+          <label><span>Max players</span><input value={forms.newGameMaxPlayers} onChange={(e) => updateForm('newGameMaxPlayers', e.target.value)} /></label>
+          <label><span>Profit margin</span><input value={forms.newGameProfitMargin} onChange={(e) => updateForm('newGameProfitMargin', e.target.value)} /></label>
+          <label className="checkbox-row"><input type="checkbox" checked={forms.newGameSeparateWallets} onChange={(e) => updateForm('newGameSeparateWallets', e.target.checked)} /><span>Separate wallets</span></label>
+          <label><span>Type <strong>CREATE NEW GAME</strong></span><input value={forms.newGameConfirm} onChange={(e) => updateForm('newGameConfirm', e.target.value)} placeholder="CREATE NEW GAME" /></label>
+          
+          <div style={{marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 12}}>
+            <button type="button" className="secondary-button" onClick={() => setActiveModal(null)}>Cancel</button>
+            <button type="submit" style={{background: 'var(--danger)'}} disabled={busyAction === 'Create new game'}>Create Game</button>
+          </div>
+        </form>
+      </Modal>
+
+      <ChatWidget
+        connected={chatConnected}
+        authenticated={session?.authenticated ?? false}
+        lines={chatLines}
+        author={chatAuthor}
+        setAuthor={setChatAuthor}
+        message={chatMessage}
+        setMessage={setChatMessage}
+        onSend={sendChat}
+      />
+    </AppLayout>
   );
 }
 
@@ -924,7 +790,7 @@ function Panel(props: { title: string; subtitle?: string; children: React.ReactN
   );
 }
 
-function DataList(props: { items: Array<[string, string]> }) {
+function DataList(props: { items: Array<[string, string | React.ReactNode]> }) {
   return (
     <dl className="data-list">
       {props.items.map(([label, value]) => (
@@ -937,7 +803,7 @@ function DataList(props: { items: Array<[string, string]> }) {
   );
 }
 
-function Table(props: { headers: string[]; rows: string[][]; emptyText: string }) {
+function Table(props: { headers: string[]; rows: React.ReactNode[][]; emptyText: string }) {
   if (props.rows.length === 0) {
     return <div className="empty-state">{props.emptyText}</div>;
   }
@@ -953,7 +819,7 @@ function Table(props: { headers: string[]; rows: string[][]; emptyText: string }
         </thead>
         <tbody>
           {props.rows.map((row, index) => (
-            <tr key={`${row.join('-')}-${index}`}>
+            <tr key={`row-${index}`}>
               {row.map((value, cellIndex) => (
                 <td key={`${index}-${cellIndex}`}>{value}</td>
               ))}
@@ -968,15 +834,6 @@ function Table(props: { headers: string[]; rows: string[][]; emptyText: string }
 function Badge(props: { label: string; value: number }) {
   return (
     <div className="badge-card">
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-    </div>
-  );
-}
-
-function StatBlock(props: { label: string; value: string }) {
-  return (
-    <div className="stat-block">
       <span>{props.label}</span>
       <strong>{props.value}</strong>
     </div>
