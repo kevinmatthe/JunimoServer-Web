@@ -1,0 +1,10 @@
+:80 {
+	root * /srv
+
+	@config path /config.js
+	header @config Cache-Control "no-store"
+
+	file_server
+
+	try_files {path} /index.html
+}

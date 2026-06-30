@@ -1,0 +1,11 @@
+services:
+  junimo-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8088:80"
+    environment:
+      WEBUI_TITLE: "JunimoServer Control"
+      JUNIMO_DEFAULT_API_BASE_URL: ""
+      JUNIMO_DOCUMENTATION_URL: "https://stardew-valley-dedicated-server.github.io/server/features/rest-api.html"

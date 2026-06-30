@@ -1,0 +1,13 @@
+.git
+.github
+.agents
+.codex
+.trae
+
+node_modules
+dist
+
+.env
+.env.*
+
+*.log
