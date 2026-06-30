@@ -1,5 +1,6 @@
 services:
   junimo-web:
+    image: ghcr.io/kevinmatthe/junimoserver-web
     build:
       context: .
       dockerfile: Dockerfile
