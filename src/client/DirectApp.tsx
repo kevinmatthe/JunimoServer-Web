@@ -548,24 +548,33 @@ export function DirectApp() {
       {activeTab === 'dashboard' && (
         <div className="layout-grid">
           <div className="column">
-            <Panel title="Overview" subtitle="Current state and configured runtime behavior">
-              <DataList
-                items={[
-                  ['Farm', dashboard.status.farmName || '-'],
-                  ['Farm type', String(dashboard.status.farmTypeKey || '-')],
-                  [
-                    'Last load',
-                    dashboard.lastLoadedAt
-                      ? `${dashboard.lastLoadedAt} (${relativeTime(dashboard.lastLoadedAt)})`
-                      : 'Not loaded',
-                  ],
-                  ['Invite code', dashboard.inviteCode.inviteCode ?? dashboard.inviteCode.error ?? 'Unavailable'],
-                  ['Auth protection', dashboard.auth.enabled ? 'Enabled' : 'Disabled'],
-                  ['Auth timeout', `${dashboard.auth.timeoutSeconds}s`],
-                  ['Cabin strategy', dashboard.cabins.strategy || '-'],
-                  ['Separate wallets', dashboard.settings.server.separateWallets ? 'Yes' : 'No'],
-                ]}
-              />
+            <Panel title="Overview" subtitle="Snapshot-backed state and settings">
+              <div className="overview-grid">
+                <div className="invite-card">
+                  <div>
+                    <span className="label">Invite Code</span>
+                    <span className="code">{dashboard.inviteCode.inviteCode ?? dashboard.inviteCode.error ?? 'Unavailable'}</span>
+                  </div>
+                  {dashboard.inviteCode.inviteCode && (
+                    <button 
+                      className="secondary-button" 
+                      onClick={() => navigator.clipboard.writeText(dashboard.inviteCode.inviteCode!)}
+                      title="Copy to clipboard"
+                    >
+                      📋 Copy
+                    </button>
+                  )}
+                </div>
+                
+                <div className="farm-tags">
+                  <span className="farm-tag"><span className="tag-icon">🌾</span> {dashboard.status.farmName || 'Unnamed Farm'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🗺️</span> Type {dashboard.status.farmTypeKey || '-'}</span>
+                  <span className="farm-tag"><span className="tag-icon">⏱️</span> {dashboard.lastLoadedAt ? relativeTime(dashboard.lastLoadedAt) : 'Not loaded'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🔒</span> {dashboard.auth.enabled ? 'Auth Enabled' : 'No Auth'}</span>
+                  <span className="farm-tag"><span className="tag-icon">🏠</span> Cabins: {dashboard.cabins.strategy || '-'}</span>
+                  {dashboard.settings.server.separateWallets && <span className="farm-tag"><span className="tag-icon">💰</span> Separate Wallets</span>}
+                </div>
+              </div>
             </Panel>
 
             <Panel title="Cabins" subtitle="Assignment and hidden-stack state">
