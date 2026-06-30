@@ -142,6 +142,7 @@ export function App() {
   const [chatLines, setChatLines] = useState<Array<{ type: string; text: string }>>([]);
   const [chatAuthor, setChatAuthor] = useState('AdminConsole');
   const [chatMessage, setChatMessage] = useState('');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'controls' | 'chat'>('dashboard');
   const [forms, setForms] = useState({
     authTimeout: '600',
     renderingFps: '15',
@@ -472,9 +473,19 @@ export function App() {
         </article>
       </section>
 
-      <section className="layout-grid">
-        <div className="column">
-          <Panel title="Overview" subtitle="Snapshot-backed state and settings">
+      
+      <nav className="stardew-tabs">
+        <button className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
+        <button className={`tab-button ${activeTab === 'map' ? 'active' : ''}`} onClick={() => setActiveTab('map')}>Map View</button>
+        <button className={`tab-button ${activeTab === 'controls' ? 'active' : ''}`} onClick={() => setActiveTab('controls')}>Controls</button>
+        <button className={`tab-button ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>Chat Bridge</button>
+      </nav>
+
+      <section className="tab-content">
+        {activeTab === 'dashboard' && (
+          <div className="layout-grid">
+            <div className="column">
+              <Panel title="Overview" subtitle="Snapshot-backed state and settings">
             <DataList
               items={[
                 ['Farm', dashboard?.status.farmName ?? '-'],
@@ -488,8 +499,7 @@ export function App() {
               ]}
             />
           </Panel>
-
-          <Panel title="Players" subtitle="Connected players and known farmhands">
+              <Panel title="Players" subtitle="Connected players and known farmhands">
             <Table
               headers={['Name', 'ID', 'Online']}
               rows={dashboard?.players.players.map((player) => [
@@ -510,8 +520,25 @@ export function App() {
               emptyText="No farmhand slots found"
             />
           </Panel>
-
-          <Panel title="Cabins" subtitle="Assignment and hidden-stack state">
+            </div>
+            <div className="column">
+              <Panel title="Performance" subtitle="Host process metrics from /stats and /health">
+            <div className="stats-grid">
+              <StatBlock label="TPS" value={dashboard?.stats.tps.toFixed(1) ?? '-'} />
+              <StatBlock label="Target TPS" value={String(dashboard?.stats.targetTps ?? '-')} />
+              <StatBlock label="Avg tick" value={`${dashboard?.stats.avgTickMs.toFixed(2) ?? '-'} ms`} />
+              <StatBlock label="Memory" value={`${dashboard?.stats.memoryMb.toFixed(1) ?? '-'} MB`} />
+              <StatBlock label="Pending actions" value={String(dashboard?.health.pendingActions ?? '-')} />
+              <StatBlock label="Game-thread wait" value={`${dashboard?.stats.gameThreadWaitMs.toFixed(2) ?? '-'} ms`} />
+            </div>
+            <div className="stats-grid compact">
+              <StatBlock label="GC Gen0" value={String(dashboard?.stats.gcGen0 ?? '-')} />
+              <StatBlock label="GC Gen1" value={String(dashboard?.stats.gcGen1 ?? '-')} />
+              <StatBlock label="GC Gen2" value={String(dashboard?.stats.gcGen2 ?? '-')} />
+              <StatBlock label="Tick count" value={String(dashboard?.health.tickCount ?? '-')} />
+            </div>
+          </Panel>
+              <Panel title="Cabins" subtitle="Assignment and hidden-stack state">
             <div className="stats-row">
               <Badge label="Total" value={dashboard?.cabins.totalCount ?? 0} />
               <Badge label="Assigned" value={dashboard?.cabins.assignedCount ?? 0} />
@@ -529,27 +556,78 @@ export function App() {
               emptyText="No cabins"
             />
           </Panel>
-
-          <Panel title="Performance" subtitle="Host process metrics from /stats and /health">
-            <div className="stats-grid">
-              <StatBlock label="TPS" value={dashboard?.stats.tps.toFixed(1) ?? '-'} />
-              <StatBlock label="Target TPS" value={String(dashboard?.stats.targetTps ?? '-')} />
-              <StatBlock label="Avg tick" value={`${dashboard?.stats.avgTickMs.toFixed(2) ?? '-'} ms`} />
-              <StatBlock label="Memory" value={`${dashboard?.stats.memoryMb.toFixed(1) ?? '-'} MB`} />
-              <StatBlock label="Pending actions" value={String(dashboard?.health.pendingActions ?? '-')} />
-              <StatBlock label="Game-thread wait" value={`${dashboard?.stats.gameThreadWaitMs.toFixed(2) ?? '-'} ms`} />
             </div>
-            <div className="stats-grid compact">
-              <StatBlock label="GC Gen0" value={String(dashboard?.stats.gcGen0 ?? '-')} />
-              <StatBlock label="GC Gen1" value={String(dashboard?.stats.gcGen1 ?? '-')} />
-              <StatBlock label="GC Gen2" value={String(dashboard?.stats.gcGen2 ?? '-')} />
-              <StatBlock label="Tick count" value={String(dashboard?.health.tickCount ?? '-')} />
+            <div className="column">
+              <Panel title="Diagnostics" subtitle="Opt-in because `/diagnostics/state` is heavier and mostly test-facing">
+            <div className="toggle-row">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={includeDiagnostics}
+                  onChange={(event) => {
+                    const next = event.target.checked;
+                    setIncludeDiagnostics(next);
+                    setLoading(true);
+                    refreshData(next).catch((reason) => {
+                      setError(reason instanceof Error ? reason.message : 'Diagnostics refresh failed');
+                      setLoading(false);
+                    });
+                  }}
+                />
+                <span>Load `/diagnostics/state` on refresh</span>
+              </label>
             </div>
+            {dashboard?.diagnostics ? (
+              <>
+                <DataList
+                  items={[
+                    ['Captured at', dashboard.diagnostics.capturedAt],
+                    ['Game mode', String(dashboard.diagnostics.gameMode)],
+                    ['Menu', dashboard.diagnostics.activeClickableMenu ?? 'None'],
+                    ['Online farmers', String(dashboard.diagnostics.onlineFarmerCount)],
+                    ['Disconnecting', dashboard.diagnostics.disconnectingFarmers.join(', ') || 'None'],
+                    ['Failed fields', dashboard.diagnostics.failedFields.join(', ') || 'None'],
+                  ]}
+                />
+                <div className="table-spacer" />
+                <Table
+                  headers={['Cabin owner', 'Indoors', 'Objects', 'Cellar', 'Pet']}
+                  rows={dashboard.diagnostics.cabins.map((cabin) => [
+                    cabin.ownerName || 'Unassigned',
+                    cabin.indoorsName,
+                    String(cabin.objectCount),
+                    String(cabin.cellarObjectCount),
+                    String(cabin.petCount),
+                  ])}
+                  emptyText="No diagnostics cabins"
+                />
+              </>
+            ) : (
+              <div className="empty-state">
+                Diagnostics are off by default. Enable the checkbox if you need live engine-state debugging.
+              </div>
+            )}
           </Panel>
-        </div>
+            </div>
+          </div>
+        )}
 
-        <div className="column">
-          <Panel title="Controls" subtitle="Low-risk runtime operations">
+        {activeTab === 'map' && (
+          <div className="layout-single">
+            <Panel title="Live screenshot" subtitle="Fetched through the local secure proxy">
+            {screenshotSrc ? (
+              <img className="screenshot-frame full-map" src={screenshotSrc} alt="JunimoServer screenshot" />
+            ) : (
+              <div className="empty-state">Screenshot unavailable: {dashboard?.screenshot.error ?? 'No image data'}</div>
+            )}
+          </Panel>
+          </div>
+        )}
+
+        {activeTab === 'controls' && (
+          <div className="layout-grid">
+            <div className="column">
+              <Panel title="Controls" subtitle="Low-risk runtime operations">
             <div className="form-grid">
               <ActionForm
                 title="Auth timeout"
@@ -650,97 +728,9 @@ export function App() {
               </ActionForm>
             </div>
           </Panel>
-
-          <Panel title="Live screenshot" subtitle="Fetched through the local secure proxy">
-            {screenshotSrc ? (
-              <img className="screenshot-frame" src={screenshotSrc} alt="JunimoServer screenshot" />
-            ) : (
-              <div className="empty-state">Screenshot unavailable: {dashboard?.screenshot.error ?? 'No image data'}</div>
-            )}
-          </Panel>
-
-          <Panel title="Chat bridge" subtitle="WebSocket relay stays same-origin; browser never sees the upstream API key">
-            <div className="chat-status-row">
-              <span className={chatConnected ? 'status-pill status-ok' : 'status-pill status-offline'}>
-                {chatConnected ? 'Connected' : 'Disconnected'}
-              </span>
-              <span className="muted-text">Messages fan out through the backend WebSocket proxy.</span>
             </div>
-            <div className="chat-log">
-              {chatLines.length === 0 ? <div className="empty-state">No chat traffic yet.</div> : null}
-              {chatLines.map((line, index) => (
-                <div key={`${line.type}-${index}`} className={`chat-line chat-${line.type}`}>
-                  {line.text}
-                </div>
-              ))}
-            </div>
-            <form className="chat-form" onSubmit={sendChat}>
-              <label>
-                <span>Author</span>
-                <input value={chatAuthor} onChange={(event) => setChatAuthor(event.target.value)} />
-              </label>
-              <label className="chat-message-input">
-                <span>Message</span>
-                <input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} />
-              </label>
-              <button type="submit">Send</button>
-            </form>
-          </Panel>
-        </div>
-
-        <div className="column">
-          <Panel title="Diagnostics" subtitle="Opt-in because `/diagnostics/state` is heavier and mostly test-facing">
-            <div className="toggle-row">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={includeDiagnostics}
-                  onChange={(event) => {
-                    const next = event.target.checked;
-                    setIncludeDiagnostics(next);
-                    setLoading(true);
-                    refreshData(next).catch((reason) => {
-                      setError(reason instanceof Error ? reason.message : 'Diagnostics refresh failed');
-                      setLoading(false);
-                    });
-                  }}
-                />
-                <span>Load `/diagnostics/state` on refresh</span>
-              </label>
-            </div>
-            {dashboard?.diagnostics ? (
-              <>
-                <DataList
-                  items={[
-                    ['Captured at', dashboard.diagnostics.capturedAt],
-                    ['Game mode', String(dashboard.diagnostics.gameMode)],
-                    ['Menu', dashboard.diagnostics.activeClickableMenu ?? 'None'],
-                    ['Online farmers', String(dashboard.diagnostics.onlineFarmerCount)],
-                    ['Disconnecting', dashboard.diagnostics.disconnectingFarmers.join(', ') || 'None'],
-                    ['Failed fields', dashboard.diagnostics.failedFields.join(', ') || 'None'],
-                  ]}
-                />
-                <div className="table-spacer" />
-                <Table
-                  headers={['Cabin owner', 'Indoors', 'Objects', 'Cellar', 'Pet']}
-                  rows={dashboard.diagnostics.cabins.map((cabin) => [
-                    cabin.ownerName || 'Unassigned',
-                    cabin.indoorsName,
-                    String(cabin.objectCount),
-                    String(cabin.cellarObjectCount),
-                    String(cabin.petCount),
-                  ])}
-                  emptyText="No diagnostics cabins"
-                />
-              </>
-            ) : (
-              <div className="empty-state">
-                Diagnostics are off by default. Enable the checkbox if you need live engine-state debugging.
-              </div>
-            )}
-          </Panel>
-
-          <Panel title="Danger zone" subtitle="Destructive or disruptive operations require explicit confirmation text">
+            <div className="column">
+              <Panel title="Danger zone" subtitle="Destructive or disruptive operations require explicit confirmation text">
             <div className="danger-grid">
               <ActionForm
                 title="Delete farmhand"
@@ -880,7 +870,41 @@ export function App() {
               </ActionForm>
             </div>
           </Panel>
-        </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'chat' && (
+          <div className="layout-single">
+            <Panel title="Chat bridge" subtitle="WebSocket relay stays same-origin; browser never sees the upstream API key">
+            <div className="chat-status-row">
+              <span className={chatConnected ? 'status-pill status-ok' : 'status-pill status-offline'}>
+                {chatConnected ? 'Connected' : 'Disconnected'}
+              </span>
+              <span className="muted-text">Messages fan out through the backend WebSocket proxy.</span>
+            </div>
+            <div className="chat-log">
+              {chatLines.length === 0 ? <div className="empty-state">No chat traffic yet.</div> : null}
+              {chatLines.map((line, index) => (
+                <div key={`${line.type}-${index}`} className={`chat-line chat-${line.type}`}>
+                  {line.text}
+                </div>
+              ))}
+            </div>
+            <form className="chat-form" onSubmit={sendChat}>
+              <label>
+                <span>Author</span>
+                <input value={chatAuthor} onChange={(event) => setChatAuthor(event.target.value)} />
+              </label>
+              <label className="chat-message-input">
+                <span>Message</span>
+                <input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} />
+              </label>
+              <button type="submit">Send</button>
+            </form>
+          </Panel>
+          </div>
+        )}
       </section>
     </div>
   );
